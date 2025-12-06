@@ -7,6 +7,7 @@ import Navbar from "./components/Navbar";
 import Index from "./pages/Index";
 import UrlScanner from "./pages/UrlScanner";
 import TextScanner from "./pages/TextScanner";
+import LearnPhishing from "./pages/LearnPhishing";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,6 +24,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/url-scanner" element={<UrlScanner />} />
             <Route path="/text-scanner" element={<TextScanner />} />
+            <Route path="/learn" element={<LearnPhishing />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </div>
