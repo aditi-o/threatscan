@@ -5,9 +5,7 @@ import RiskMeter from "@/components/RiskMeter";
 import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
 import { toast } from "sonner";
-
-// Backend API base URL
-const API_BASE_URL = "http://localhost:8000";
+import { API_ENDPOINTS, apiUpload } from "@/lib/api";
 
 interface ScanResult {
   riskScore: number;
@@ -206,17 +204,13 @@ const ScreenshotOCR = () => {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch(`${API_BASE_URL}/scan/screenshot`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Server error: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await apiUpload<{
+        text?: string;
+        risk_score?: number;
+        label?: string;
+        reasons?: string[];
+        model_version?: string;
+      }>(API_ENDPOINTS.scanScreenshot, formData);
       
       const scanResult: ScanResult = {
         riskScore: data.risk_score ?? 0,
