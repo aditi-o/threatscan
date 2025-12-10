@@ -6,6 +6,9 @@ import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
 import { toast } from "sonner";
 
+// Backend API base URL
+const API_BASE_URL = "http://localhost:8000";
+
 interface ScanResult {
   riskScore: number;
   scamType: string;
@@ -199,17 +202,52 @@ const ScreenshotOCR = () => {
     setIsAnalyzing(true);
     setResult(null);
 
-    // Simulate processing delay (in production, this would call the backend OCR API)
-    await new Promise((resolve) => setTimeout(resolve, 2500));
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    // For demo purposes, use a sample text
-    // In production: POST to /scan/screenshot endpoint for OCR + analysis
-    const sampleText = "This is simulated OCR output. In production, the image text would be extracted using Tesseract or TrOCR.";
-    const scanResult = analyzeExtractedText(sampleText);
-    
-    setResult(scanResult);
-    setIsAnalyzing(false);
-    toast.info("Demo mode: In production, OCR would extract text from image");
+      const response = await fetch(`${API_BASE_URL}/scan/screenshot`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      const scanResult: ScanResult = {
+        riskScore: data.risk_score ?? 0,
+        scamType: data.label ?? "Unknown",
+        extractedText: data.text ?? "",
+        indicators: data.reasons ?? [],
+        suggestedAction: data.risk_score > 60 
+          ? "DANGER! This is very likely a scam message. Do NOT respond or click any links."
+          : data.risk_score > 30 
+          ? "This screenshot has suspicious patterns. Verify through official channels."
+          : "This screenshot appears to be safe. No major scam indicators detected.",
+        safetyTips: ["Don't click links in suspicious messages", "Verify sender through official channels", "Report scams at cybercrime.gov.in"],
+        modelVersion: data.model_version ?? "SafeLink-OCR-v1.0",
+      };
+
+      setResult(scanResult);
+      setDemoMode(true); // Show extracted text
+
+      if (scanResult.riskScore > 60) {
+        toast.error("Scam detected! This screenshot contains dangerous content.");
+      } else if (scanResult.riskScore > 30) {
+        toast.warning("Suspicious content detected in screenshot.");
+      } else {
+        toast.success("Screenshot content appears to be safe.");
+      }
+    } catch (error) {
+      console.error("Analysis error:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to analyze screenshot. Is the backend running?");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const getResultType = () => {

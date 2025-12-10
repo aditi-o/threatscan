@@ -6,6 +6,9 @@ import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
 import { toast } from "sonner";
 
+// Backend API base URL
+const API_BASE_URL = "http://localhost:8000";
+
 interface ScanResult {
   riskScore: number;
   scamType: string;
@@ -184,17 +187,52 @@ const CallAnalyzer = () => {
     setIsAnalyzing(true);
     setResult(null);
 
-    // Simulate processing delay (in production, this would call the backend API)
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    // For demo purposes, use a sample transcript
-    // In production: POST to /scan/audio endpoint
-    const sampleTranscript = "This is a simulated transcript. In production, the audio would be transcribed using Whisper API.";
-    const scanResult = analyzeTranscript(sampleTranscript);
-    
-    setResult(scanResult);
-    setIsAnalyzing(false);
-    toast.info("Demo mode: In production, audio would be transcribed via Whisper API");
+      const response = await fetch(`${API_BASE_URL}/scan/audio`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      const scanResult: ScanResult = {
+        riskScore: data.risk_score ?? 0,
+        scamType: data.label ?? "Unknown",
+        transcript: data.transcript ?? "",
+        indicators: data.reasons ?? [],
+        suggestedAction: data.risk_score > 60 
+          ? "HIGH ALERT! This is very likely a scam call. Hang up immediately. Report to cyber crime helpline 1930."
+          : data.risk_score > 30 
+          ? "This call has suspicious patterns. Do not share any personal or financial information."
+          : "This call appears to be legitimate. However, always verify caller identity.",
+        safetyTips: ["Never share OTP or passwords", "Verify caller through official channels", "Report suspicious calls to 1930"],
+        modelVersion: data.model_version ?? "SafeLink-Audio-v1.0",
+      };
+
+      setResult(scanResult);
+      setDemoMode(true); // Show transcript
+
+      if (scanResult.riskScore > 60) {
+        toast.error("Scam call detected! This call shows dangerous patterns.");
+      } else if (scanResult.riskScore > 30) {
+        toast.warning("Suspicious patterns detected in this call.");
+      } else {
+        toast.success("This call appears to be safe.");
+      }
+    } catch (error) {
+      console.error("Analysis error:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to analyze audio. Is the backend running?");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const getResultType = () => {
