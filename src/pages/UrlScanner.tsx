@@ -6,6 +6,7 @@ import RiskMeter from "@/components/RiskMeter";
 import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
 import { toast } from "sonner";
+import { API_ENDPOINTS, apiRequest } from "@/lib/api";
 
 interface ScanResult {
   riskScore: number;
@@ -158,19 +159,48 @@ const UrlScanner = () => {
     setIsScanning(true);
     setResult(null);
 
-    // Simulate analysis delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      const data = await apiRequest<{
+        risk_score?: number;
+        label?: string;
+        url?: string;
+        heuristics?: { name: string; score: number; description: string }[];
+        suggested_action?: string;
+      }>(API_ENDPOINTS.scanUrl, {
+        method: "POST",
+        body: JSON.stringify({ url: urlToScan }),
+      });
 
-    const scanResult = analyzeUrl(urlToScan);
-    setResult(scanResult);
-    setIsScanning(false);
+      const scanResult: ScanResult = {
+        riskScore: data.risk_score ?? 0,
+        label: data.label ?? "Unknown",
+        url: data.url ?? urlToScan,
+        heuristics: data.heuristics ?? [],
+        suggestedAction: data.suggested_action ?? 
+          (data.risk_score && data.risk_score > 60 
+            ? "Do not visit this URL. It shows multiple signs of being malicious."
+            : data.risk_score && data.risk_score > 30 
+            ? "Proceed with caution. Verify the source before entering personal information."
+            : "This URL appears to be safe to visit."),
+      };
 
-    if (scanResult.riskScore > 60) {
-      toast.warning("High risk URL detected! Be careful.");
-    } else if (scanResult.riskScore > 30) {
-      toast.info("Some suspicious patterns detected.");
-    } else {
-      toast.success("URL appears to be safe!");
+      setResult(scanResult);
+
+      if (scanResult.riskScore > 60) {
+        toast.warning("High risk URL detected! Be careful.");
+      } else if (scanResult.riskScore > 30) {
+        toast.info("Some suspicious patterns detected.");
+      } else {
+        toast.success("URL appears to be safe!");
+      }
+    } catch (error) {
+      console.error("Scan error:", error);
+      // Fallback to local analysis if backend is unavailable
+      const localResult = analyzeUrl(urlToScan);
+      setResult(localResult);
+      toast.info("Using local analysis (backend unavailable)");
+    } finally {
+      setIsScanning(false);
     }
   };
 

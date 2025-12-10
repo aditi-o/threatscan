@@ -6,6 +6,7 @@ import RiskMeter from "@/components/RiskMeter";
 import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
 import { toast } from "sonner";
+import { API_ENDPOINTS, apiRequest } from "@/lib/api";
 
 interface ScanResult {
   riskScore: number;
@@ -156,19 +157,48 @@ const TextScanner = () => {
     setIsScanning(true);
     setResult(null);
 
-    // Simulate analysis delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      const data = await apiRequest<{
+        risk_score?: number;
+        label?: string;
+        confidence?: number;
+        reasons?: string[];
+        suggested_action?: string;
+      }>(API_ENDPOINTS.scanText, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
 
-    const scanResult = analyzeText(text);
-    setResult(scanResult);
-    setIsScanning(false);
+      const scanResult: ScanResult = {
+        riskScore: data.risk_score ?? 0,
+        scamType: data.label ?? "Unknown",
+        confidence: data.confidence ?? Math.min((data.risk_score ?? 0) + 20, 100),
+        indicators: data.reasons ?? [],
+        suggestedAction: data.suggested_action ?? 
+          (data.risk_score && data.risk_score > 60 
+            ? "This is likely a scam! Do not respond or share any information."
+            : data.risk_score && data.risk_score > 30 
+            ? "This message has suspicious patterns. Do not share personal information."
+            : "This message appears to be safe."),
+      };
 
-    if (scanResult.riskScore > 60) {
-      toast.error("Scam detected! Do not respond to this message.");
-    } else if (scanResult.riskScore > 30) {
-      toast.warning("Suspicious patterns detected. Be careful!");
-    } else {
-      toast.success("Message appears to be safe!");
+      setResult(scanResult);
+
+      if (scanResult.riskScore > 60) {
+        toast.error("Scam detected! Do not respond to this message.");
+      } else if (scanResult.riskScore > 30) {
+        toast.warning("Suspicious patterns detected. Be careful!");
+      } else {
+        toast.success("Message appears to be safe!");
+      }
+    } catch (error) {
+      console.error("Scan error:", error);
+      // Fallback to local analysis if backend is unavailable
+      const localResult = analyzeText(text);
+      setResult(localResult);
+      toast.info("Using local analysis (backend unavailable)");
+    } finally {
+      setIsScanning(false);
     }
   };
 
