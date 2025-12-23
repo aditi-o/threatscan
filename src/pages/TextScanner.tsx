@@ -159,25 +159,26 @@ const TextScanner = () => {
 
     try {
       const data = await apiRequest<{
-        risk_score?: number;
-        label?: string;
-        confidence?: number;
-        reasons?: string[];
-        suggested_action?: string;
+        risk_score: number;
+        label: string;
+        reasons: string[];
+        suggestions: string[];
+        is_safe: boolean;
       }>(API_ENDPOINTS.scanText, {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ content: text }),
       });
 
+      // Convert backend response to frontend format
       const scanResult: ScanResult = {
-        riskScore: data.risk_score ?? 0,
-        scamType: data.label ?? "Unknown",
-        confidence: data.confidence ?? Math.min((data.risk_score ?? 0) + 20, 100),
-        indicators: data.reasons ?? [],
-        suggestedAction: data.suggested_action ?? 
-          (data.risk_score && data.risk_score > 60 
+        riskScore: data.risk_score,
+        scamType: data.label,
+        confidence: Math.min(data.risk_score + 20, 100),
+        indicators: data.reasons,
+        suggestedAction: data.suggestions[0] ?? 
+          (data.risk_score > 60 
             ? "This is likely a scam! Do not respond or share any information."
-            : data.risk_score && data.risk_score > 30 
+            : data.risk_score > 30 
             ? "This message has suspicious patterns. Do not share personal information."
             : "This message appears to be safe."),
       };

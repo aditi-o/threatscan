@@ -4,7 +4,7 @@ Handles URL, text, screenshot, and audio scanning.
 """
 
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -15,7 +15,7 @@ from app.utils.hf_client import hf_client
 from app.utils.heuristics import analyze_url_structure, analyze_text_content, compute_composite_score
 from app.utils.ocr import image_to_text
 from app.utils.stt import audio_to_text, is_supported_audio_format
-from app.utils.sanitizers import redact_pii, sanitize_for_logging
+from app.utils.sanitizers import redact_pii
 
 router = APIRouter(prefix="/scan", tags=["Scanning"])
 
@@ -89,7 +89,11 @@ async def scan_url(
     
     Uses URLBert model + heuristic analysis for comprehensive detection.
     """
-    url = request.content.strip()
+    # Get URL from request (supports both 'content' and 'url' fields)
+    url = request.get_content().strip()
+    
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
     
     # Validate URL format
     if not url.startswith(("http://", "https://")):
@@ -135,15 +139,18 @@ async def scan_url(
     
     # Save to database
     user_id = current_user.id if current_user else None
-    db_scan = await create_scan(
-        db,
-        user_id=user_id,
-        input_type="url",
-        input_text=url,
-        result_json=result.model_dump(),
-        model_version=MODEL_VERSION
-    )
-    result.scan_id = db_scan.id
+    try:
+        db_scan = await create_scan(
+            db,
+            user_id=user_id,
+            input_type="url",
+            input_text=url,
+            result_json=result.model_dump(),
+            model_version=MODEL_VERSION
+        )
+        result.scan_id = db_scan.id
+    except Exception as e:
+        print(f"Warning: Could not save scan to database: {e}")
     
     return result
 
@@ -159,7 +166,11 @@ async def scan_text(
     
     Uses zero-shot classification to identify scam types.
     """
-    text = request.content.strip()
+    # Get text from request (supports both 'content' and 'text' fields)
+    text = request.get_content().strip()
+    
+    if not text:
+        raise HTTPException(status_code=400, detail="Text content is required")
     
     if len(text) < 10:
         raise HTTPException(status_code=400, detail="Text too short for analysis")
@@ -219,15 +230,18 @@ async def scan_text(
     
     # Save to database
     user_id = current_user.id if current_user else None
-    db_scan = await create_scan(
-        db,
-        user_id=user_id,
-        input_type="text",
-        input_text=redacted_text,
-        result_json=result.model_dump(),
-        model_version=MODEL_VERSION
-    )
-    result.scan_id = db_scan.id
+    try:
+        db_scan = await create_scan(
+            db,
+            user_id=user_id,
+            input_type="text",
+            input_text=redacted_text,
+            result_json=result.model_dump(),
+            model_version=MODEL_VERSION
+        )
+        result.scan_id = db_scan.id
+    except Exception as e:
+        print(f"Warning: Could not save scan to database: {e}")
     
     return result
 
@@ -259,7 +273,7 @@ async def scan_screenshot(
     if not extracted_text:
         raise HTTPException(
             status_code=422,
-            detail="Could not extract text from image. Please try a clearer image."
+            detail="Could not extract text from image. Please try a clearer image or ensure Tesseract OCR is installed."
         )
     
     # Redact PII
@@ -312,15 +326,18 @@ async def scan_screenshot(
     
     # Save to database
     user_id = current_user.id if current_user else None
-    db_scan = await create_scan(
-        db,
-        user_id=user_id,
-        input_type="screenshot",
-        input_text=redacted_text[:1000],
-        result_json=result.model_dump(),
-        model_version=MODEL_VERSION
-    )
-    result.scan_id = db_scan.id
+    try:
+        db_scan = await create_scan(
+            db,
+            user_id=user_id,
+            input_type="screenshot",
+            input_text=redacted_text[:1000],
+            result_json=result.model_dump(),
+            model_version=MODEL_VERSION
+        )
+        result.scan_id = db_scan.id
+    except Exception as e:
+        print(f"Warning: Could not save scan to database: {e}")
     
     return result
 
@@ -356,7 +373,7 @@ async def scan_audio(
     if not transcript:
         raise HTTPException(
             status_code=422,
-            detail="Could not transcribe audio. Please try a clearer recording."
+            detail="Could not transcribe audio. Please try a clearer recording or check HF API key."
         )
     
     # Redact PII
@@ -409,14 +426,17 @@ async def scan_audio(
     
     # Save to database
     user_id = current_user.id if current_user else None
-    db_scan = await create_scan(
-        db,
-        user_id=user_id,
-        input_type="audio",
-        input_text=redacted_transcript[:1000],
-        result_json=result.model_dump(),
-        model_version=MODEL_VERSION
-    )
-    result.scan_id = db_scan.id
+    try:
+        db_scan = await create_scan(
+            db,
+            user_id=user_id,
+            input_type="audio",
+            input_text=redacted_transcript[:1000],
+            result_json=result.model_dump(),
+            model_version=MODEL_VERSION
+        )
+        result.scan_id = db_scan.id
+    except Exception as e:
+        print(f"Warning: Could not save scan to database: {e}")
     
     return result

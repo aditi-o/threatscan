@@ -161,25 +161,31 @@ const UrlScanner = () => {
 
     try {
       const data = await apiRequest<{
-        risk_score?: number;
-        label?: string;
-        url?: string;
-        heuristics?: { name: string; score: number; description: string }[];
-        suggested_action?: string;
+        risk_score: number;
+        label: string;
+        input_text: string;
+        reasons: string[];
+        suggestions: string[];
+        is_safe: boolean;
       }>(API_ENDPOINTS.scanUrl, {
         method: "POST",
-        body: JSON.stringify({ url: urlToScan }),
+        body: JSON.stringify({ content: urlToScan }),
       });
 
+      // Convert backend response to frontend format
       const scanResult: ScanResult = {
-        riskScore: data.risk_score ?? 0,
-        label: data.label ?? "Unknown",
-        url: data.url ?? urlToScan,
-        heuristics: data.heuristics ?? [],
-        suggestedAction: data.suggested_action ?? 
-          (data.risk_score && data.risk_score > 60 
+        riskScore: data.risk_score,
+        label: data.label,
+        url: data.input_text,
+        heuristics: data.reasons.map((reason, idx) => ({
+          name: reason.split(":")[0] || `Finding ${idx + 1}`,
+          score: Math.round(data.risk_score / Math.max(data.reasons.length, 1)),
+          description: reason,
+        })),
+        suggestedAction: data.suggestions[0] || 
+          (data.risk_score > 60 
             ? "Do not visit this URL. It shows multiple signs of being malicious."
-            : data.risk_score && data.risk_score > 30 
+            : data.risk_score > 30 
             ? "Proceed with caution. Verify the source before entering personal information."
             : "This URL appears to be safe to visit."),
       };
