@@ -205,25 +205,27 @@ const ScreenshotOCR = () => {
       formData.append("file", file);
 
       const data = await apiUpload<{
-        text?: string;
-        risk_score?: number;
-        label?: string;
-        reasons?: string[];
-        model_version?: string;
+        extracted_text: string;
+        risk_score: number;
+        label: string;
+        reasons: string[];
+        suggestions: string[];
+        model_version: string;
       }>(API_ENDPOINTS.scanScreenshot, formData);
       
       const scanResult: ScanResult = {
-        riskScore: data.risk_score ?? 0,
-        scamType: data.label ?? "Unknown",
-        extractedText: data.text ?? "",
-        indicators: data.reasons ?? [],
-        suggestedAction: data.risk_score > 60 
-          ? "DANGER! This is very likely a scam message. Do NOT respond or click any links."
-          : data.risk_score > 30 
-          ? "This screenshot has suspicious patterns. Verify through official channels."
-          : "This screenshot appears to be safe. No major scam indicators detected.",
-        safetyTips: ["Don't click links in suspicious messages", "Verify sender through official channels", "Report scams at cybercrime.gov.in"],
-        modelVersion: data.model_version ?? "SafeLink-OCR-v1.0",
+        riskScore: data.risk_score,
+        scamType: data.label,
+        extractedText: data.extracted_text,
+        indicators: data.reasons,
+        suggestedAction: data.suggestions[0] ?? 
+          (data.risk_score > 60 
+            ? "DANGER! This is very likely a scam message. Do NOT respond or click any links."
+            : data.risk_score > 30 
+            ? "This screenshot has suspicious patterns. Verify through official channels."
+            : "This screenshot appears to be safe. No major scam indicators detected."),
+        safetyTips: data.suggestions.slice(1) || ["Don't click links in suspicious messages", "Verify sender through official channels", "Report scams at cybercrime.gov.in"],
+        modelVersion: data.model_version,
       };
 
       setResult(scanResult);

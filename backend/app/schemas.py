@@ -5,7 +5,7 @@ Defines data transfer objects (DTOs) for the API.
 
 from datetime import datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ========================
@@ -57,8 +57,17 @@ class TokenData(BaseModel):
 # ========================
 
 class ScanRequest(BaseModel):
-    """Base schema for scan requests."""
-    content: str  # URL or text to scan
+    """
+    Base schema for scan requests.
+    Accepts 'content', 'url', or 'text' fields for flexibility.
+    """
+    content: Optional[str] = None
+    url: Optional[str] = None  # Alternative for URL scans
+    text: Optional[str] = None  # Alternative for text scans
+    
+    def get_content(self) -> str:
+        """Get the content to scan from any of the accepted fields."""
+        return self.content or self.url or self.text or ""
 
 
 class ScanResponse(BaseModel):
@@ -72,6 +81,14 @@ class ScanResponse(BaseModel):
     suggestions: List[str]  # Safety recommendations
     model_version: str
     scan_id: Optional[int] = None
+    
+    # Aliases for frontend compatibility
+    @property
+    def heuristics(self) -> List[dict]:
+        """Convert reasons to heuristics format for frontend."""
+        return [{"name": r.split(":")[0] if ":" in r else "Finding", 
+                 "score": 10, 
+                 "description": r} for r in self.reasons]
 
 
 class AudioScanResponse(ScanResponse):

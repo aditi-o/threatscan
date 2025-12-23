@@ -39,7 +39,31 @@ export const API_ENDPOINTS = {
   chat: `${API_BASE_URL}/chat`,
   report: `${API_BASE_URL}/report`,
   reports: `${API_BASE_URL}/reports`,
+  
+  // Health check
+  health: `${API_BASE_URL}/health`,
 };
+
+// Type definitions for API responses
+export interface ScanResult {
+  input_type: string;
+  input_text: string;
+  risk_score: number;
+  label: string;
+  is_safe: boolean;
+  reasons: string[];
+  suggestions: string[];
+  model_version: string;
+  scan_id?: number;
+}
+
+export interface ScreenshotScanResult extends ScanResult {
+  extracted_text: string;
+}
+
+export interface AudioScanResult extends ScanResult {
+  transcript: string;
+}
 
 // Helper function to make API requests
 export async function apiRequest<T>(
@@ -78,4 +102,17 @@ export async function apiUpload<T>(
   }
 
   return response.json();
+}
+
+// Check if backend is available
+export async function checkBackendHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(API_ENDPOINTS.health, { 
+      method: "GET",
+      signal: AbortSignal.timeout(3000) // 3 second timeout
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

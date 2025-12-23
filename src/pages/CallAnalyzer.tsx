@@ -190,25 +190,27 @@ const CallAnalyzer = () => {
       formData.append("file", file);
 
       const data = await apiUpload<{
-        transcript?: string;
-        risk_score?: number;
-        label?: string;
-        reasons?: string[];
-        model_version?: string;
+        transcript: string;
+        risk_score: number;
+        label: string;
+        reasons: string[];
+        suggestions: string[];
+        model_version: string;
       }>(API_ENDPOINTS.scanAudio, formData);
       
       const scanResult: ScanResult = {
-        riskScore: data.risk_score ?? 0,
-        scamType: data.label ?? "Unknown",
-        transcript: data.transcript ?? "",
-        indicators: data.reasons ?? [],
-        suggestedAction: data.risk_score > 60 
-          ? "HIGH ALERT! This is very likely a scam call. Hang up immediately. Report to cyber crime helpline 1930."
-          : data.risk_score > 30 
-          ? "This call has suspicious patterns. Do not share any personal or financial information."
-          : "This call appears to be legitimate. However, always verify caller identity.",
-        safetyTips: ["Never share OTP or passwords", "Verify caller through official channels", "Report suspicious calls to 1930"],
-        modelVersion: data.model_version ?? "SafeLink-Audio-v1.0",
+        riskScore: data.risk_score,
+        scamType: data.label,
+        transcript: data.transcript,
+        indicators: data.reasons,
+        suggestedAction: data.suggestions[0] ?? 
+          (data.risk_score > 60 
+            ? "HIGH ALERT! This is very likely a scam call. Hang up immediately. Report to cyber crime helpline 1930."
+            : data.risk_score > 30 
+            ? "This call has suspicious patterns. Do not share any personal or financial information."
+            : "This call appears to be legitimate. However, always verify caller identity."),
+        safetyTips: data.suggestions.slice(1) || ["Never share OTP or passwords", "Verify caller through official channels", "Report suspicious calls to 1930"],
+        modelVersion: data.model_version,
       };
 
       setResult(scanResult);
