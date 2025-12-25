@@ -7,15 +7,18 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 from app.config import settings
 
-# Create async engine
-# Use async_database_url to handle URL conversion for PostgreSQL
+# Create async engine with appropriate settings for SQLite vs PostgreSQL
+_db_url = settings.async_database_url
+
 engine = create_async_engine(
-    settings.async_database_url,
+    _db_url,
     echo=False,  # Set to True for SQL debugging
     future=True,
-    # PostgreSQL specific settings
-    pool_pre_ping=True if "postgresql" in settings.async_database_url else False,
+    # Only use pool_pre_ping for PostgreSQL (not SQLite)
+    pool_pre_ping=not settings.is_sqlite,
 )
+
+print(f"📊 Database: {'SQLite (local)' if settings.is_sqlite else 'PostgreSQL'}")
 
 # Create async session factory
 async_session = async_sessionmaker(
