@@ -20,15 +20,18 @@ class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # Database URL
-    # Default: SQLite for development
+    # Default: SQLite for development (works out of the box)
     # For production: postgresql+asyncpg://user:pass@host:port/dbname
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./safelink.db")
+    _DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
-    # Convert standard PostgreSQL URL to async format if needed
     @property
     def async_database_url(self) -> str:
-        """Get async-compatible database URL."""
-        url = self.DATABASE_URL
+        """Get async-compatible database URL. Defaults to SQLite if not configured."""
+        url = self._DATABASE_URL.strip()
+        
+        # Default to SQLite if no DATABASE_URL is set or it's empty
+        if not url:
+            return "sqlite+aiosqlite:///./safelink.db"
         
         # Convert postgres:// to postgresql:// (common in Supabase/Heroku)
         if url.startswith("postgres://"):
@@ -39,6 +42,11 @@ class Settings:
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
         return url
+    
+    @property
+    def is_sqlite(self) -> bool:
+        """Check if using SQLite database."""
+        return "sqlite" in self.async_database_url
     
     # JWT Settings for authentication
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-in-production")
