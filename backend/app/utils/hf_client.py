@@ -8,9 +8,9 @@ from functools import lru_cache
 from typing import Any, Dict, Optional, List
 from app.config import settings
 
-# HuggingFace Inference API base URL
-HF_API_URL = "https://api-inference.huggingface.co/models"
-
+# Hugging Face Inference Router base URL (api-inference.huggingface.co was deprecated)
+# New base uses the HF router + provider: /hf-inference/models
+HF_API_URL = "https://router.huggingface.co/hf-inference/models"
 
 class HFClient:
     """
