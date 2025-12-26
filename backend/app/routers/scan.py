@@ -107,11 +107,18 @@ async def scan_url(
     
     # Calculate model probability
     model_prob = 0.0
-    if ml_result and isinstance(ml_result, list):
-        for item in ml_result:
-            if item.get("label") == "malicious":
-                model_prob = item.get("score", 0)
-                break
+    if ml_result:
+        # Handle nested list response from HF router API: [[{...}]] or [{...}]
+        result_list = ml_result
+        if isinstance(ml_result, list) and len(ml_result) > 0:
+            # Check if it's a nested list (new HF router format)
+            if isinstance(ml_result[0], list):
+                result_list = ml_result[0]
+            
+            for item in result_list:
+                if isinstance(item, dict) and item.get("label") == "malicious":
+                    model_prob = item.get("score", 0)
+                    break
     
     # Compute composite risk score
     risk_score = compute_composite_score(model_prob, heuristic_result["score"])

@@ -56,7 +56,9 @@ class HFClient:
                 )
                 
                 if response.status_code == 200:
-                    return response.json()
+                    result = response.json()
+                    print(f"✅ HF API success for {model_id}: {type(result)}")
+                    return result
                 elif response.status_code == 503:
                     # Model is loading, wait and retry
                     print(f"⏳ Model {model_id} is loading...")
