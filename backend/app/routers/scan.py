@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.schemas import ScanRequest, ScanResponse, AudioScanResponse, ScreenshotScanResponse
+from app.schemas import ScanRequest, ScanResponse, AudioScanResponse, ScreenshotScanResponse, UrlBreakdown
 from app.crud import create_scan
 from app.routers.auth import get_optional_user
 from app.utils.hf_client import hf_client
@@ -16,6 +16,7 @@ from app.utils.heuristics import analyze_url_structure, analyze_text_content, co
 from app.utils.ocr import image_to_text
 from app.utils.stt import audio_to_text, is_supported_audio_format
 from app.utils.sanitizers import redact_pii
+from app.utils.threat_explainer import get_full_threat_analysis
 
 router = APIRouter(prefix="/scan", tags=["Scanning"])
 
@@ -91,6 +92,7 @@ async def scan_url(
     """
     # Get URL from request (supports both 'content' and 'url' fields)
     url = request.get_content().strip()
+    language = request.get_language()
     
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
@@ -132,6 +134,27 @@ async def scan_url(
     else:
         label = "Low Risk - Appears Safe"
     
+    # Get threat analysis with explanations
+    threat_analysis = get_full_threat_analysis(url, risk_score, language)
+    
+    # Combine heuristic flags with threat reasons
+    reasons = threat_analysis["reasons"] if threat_analysis["reasons"] else heuristic_result["flags"]
+    if not reasons:
+        reasons = ["No suspicious patterns detected"]
+    
+    # Build URL breakdown
+    url_breakdown_data = threat_analysis["url_breakdown"]
+    url_breakdown = UrlBreakdown(
+        full_host=url_breakdown_data.get("full_host", ""),
+        subdomain=url_breakdown_data.get("subdomain", ""),
+        domain=url_breakdown_data.get("domain", ""),
+        tld=url_breakdown_data.get("tld", ""),
+        is_ip=url_breakdown_data.get("is_ip", False),
+        registered_domain=url_breakdown_data.get("registered_domain", ""),
+        path=url_breakdown_data.get("path", "/"),
+        port=url_breakdown_data.get("port", "")
+    )
+    
     # Build response
     result = ScanResponse(
         input_type="url",
@@ -139,9 +162,14 @@ async def scan_url(
         risk_score=risk_score,
         label=label,
         is_safe=is_safe,
-        reasons=heuristic_result["flags"] if heuristic_result["flags"] else ["No suspicious patterns detected"],
+        reasons=reasons,
         suggestions=get_safety_suggestions(label, risk_score),
-        model_version=MODEL_VERSION
+        model_version=MODEL_VERSION,
+        attack_patterns=threat_analysis["attack_patterns"],
+        url_breakdown=url_breakdown,
+        explanation=threat_analysis["explanation"],
+        safety_tip=threat_analysis["safety_tip"],
+        language=language
     )
     
     # Save to database
