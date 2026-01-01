@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import RiskMeter from "@/components/RiskMeter";
 import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
+import { FeedbackForm } from "@/components/FeedbackForm";
 import { toast } from "sonner";
 import { API_ENDPOINTS, apiRequest } from "@/lib/api";
 
@@ -544,6 +545,14 @@ const UrlScanner = () => {
                 <p className="text-muted-foreground">{result.safetyTip}</p>
               </div>
             )}
+
+            {/* Feedback Form */}
+            <FeedbackForm
+              inputType="url"
+              inputText={result.url}
+              originalVerdict={result.riskScore <= 30 ? "safe" : result.riskScore <= 60 ? "suspicious" : "malicious"}
+              language={language}
+            />
 
             {/* Heuristics Breakdown */}
             {result.heuristics.length > 0 && result.riskScore > 0 && (
