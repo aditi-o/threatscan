@@ -39,6 +39,8 @@ export const API_ENDPOINTS = {
   chat: `${API_BASE_URL}/chat`,
   report: `${API_BASE_URL}/report`,
   reports: `${API_BASE_URL}/reports`,
+  feedback: `${API_BASE_URL}/feedback`,
+  feedbackStats: `${API_BASE_URL}/feedback/stats`,
   
   // Health check
   health: `${API_BASE_URL}/health`,

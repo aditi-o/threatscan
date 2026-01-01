@@ -12,7 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.config import settings
 from app.db import create_db
-from app.routers import auth, scan, chat, report, admin
+from app.routers import auth, scan, chat, report, admin, feedback
 
 
 @asynccontextmanager
@@ -83,6 +83,7 @@ app.include_router(scan.router)
 app.include_router(chat.router)
 app.include_router(report.router)
 app.include_router(admin.router)
+app.include_router(feedback.router)
 
 
 @app.get("/", tags=["Health"])

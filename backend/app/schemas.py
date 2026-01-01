@@ -182,3 +182,52 @@ class ScanHistoryOut(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# ========================
+# Feedback Schemas
+# ========================
+
+class FeedbackCreate(BaseModel):
+    """Schema for submitting scan feedback."""
+    scan_id: Optional[int] = None
+    input_type: str
+    input_text: str
+    original_verdict: str  # safe, suspicious, malicious
+    user_verdict: str  # safe, suspicious, malicious
+    comment: Optional[str] = None
+    
+    @property
+    def feedback_type(self) -> str:
+        """Determine feedback type based on verdicts."""
+        if self.original_verdict == self.user_verdict:
+            return "correct"
+        elif self.original_verdict in ["suspicious", "malicious"] and self.user_verdict == "safe":
+            return "false_positive"
+        else:
+            return "false_negative"
+
+
+class FeedbackOut(BaseModel):
+    """Schema for feedback response."""
+    id: int
+    input_type: str
+    input_text: str
+    original_verdict: str
+    user_verdict: str
+    feedback_type: str
+    comment: Optional[str]
+    status: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class FeedbackStats(BaseModel):
+    """Schema for feedback statistics."""
+    total_feedback: int
+    false_positives: int
+    false_negatives: int
+    correct: int
+    pending_review: int

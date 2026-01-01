@@ -7,8 +7,8 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from passlib.context import CryptContext
-from app.models import User, ScanHistory, Report
-from app.schemas import UserCreate, ReportCreate
+from app.models import User, ScanHistory, Report, ScanFeedback
+from app.schemas import UserCreate, ReportCreate, FeedbackCreate
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -168,3 +168,76 @@ async def update_report_status(
         await db.commit()
         await db.refresh(report)
     return report
+
+
+# ========================
+# Feedback CRUD
+# ========================
+
+async def create_feedback(
+    db: AsyncSession,
+    user_id: Optional[int],
+    feedback: FeedbackCreate
+) -> ScanFeedback:
+    """
+    Create a new scan feedback record.
+    """
+    db_feedback = ScanFeedback(
+        scan_id=feedback.scan_id,
+        user_id=user_id,
+        input_type=feedback.input_type,
+        input_text=feedback.input_text,
+        original_verdict=feedback.original_verdict,
+        user_verdict=feedback.user_verdict,
+        feedback_type=feedback.feedback_type,
+        comment=feedback.comment
+    )
+    db.add(db_feedback)
+    await db.commit()
+    await db.refresh(db_feedback)
+    return db_feedback
+
+
+async def get_feedback_stats(db: AsyncSession) -> dict:
+    """
+    Get feedback statistics for model improvement insights.
+    """
+    from sqlalchemy import func
+    
+    # Count by feedback type
+    type_counts = await db.execute(
+        select(
+            ScanFeedback.feedback_type,
+            func.count(ScanFeedback.id).label("count")
+        ).group_by(ScanFeedback.feedback_type)
+    )
+    counts = {row[0]: row[1] for row in type_counts}
+    
+    # Count pending reviews
+    pending = await db.execute(
+        select(func.count(ScanFeedback.id))
+        .where(ScanFeedback.status == "pending")
+    )
+    
+    return {
+        "total_feedback": sum(counts.values()),
+        "false_positives": counts.get("false_positive", 0),
+        "false_negatives": counts.get("false_negative", 0),
+        "correct": counts.get("correct", 0),
+        "pending_review": pending.scalar() or 0
+    }
+
+
+async def get_all_feedback(
+    db: AsyncSession,
+    feedback_type: Optional[str] = None,
+    limit: int = 100
+) -> List[ScanFeedback]:
+    """
+    Get all feedback records, optionally filtered by type.
+    """
+    query = select(ScanFeedback).order_by(ScanFeedback.created_at.desc()).limit(limit)
+    if feedback_type:
+        query = query.where(ScanFeedback.feedback_type == feedback_type)
+    result = await db.execute(query)
+    return result.scalars().all()

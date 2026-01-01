@@ -63,3 +63,27 @@ class Report(Base):
     
     # Relationships
     user = relationship("User", back_populates="reports")
+
+
+class ScanFeedback(Base):
+    """
+    User feedback on scan results for model improvement.
+    Tracks false positives and false negatives.
+    """
+    __tablename__ = "scan_feedback"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(Integer, ForeignKey("scan_history.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    input_type = Column(String(20), nullable=False)  # url, text, screenshot, audio
+    input_text = Column(Text, nullable=False)
+    original_verdict = Column(String(20), nullable=False)  # safe, suspicious, malicious
+    user_verdict = Column(String(20), nullable=False)  # safe, suspicious, malicious
+    feedback_type = Column(String(30), nullable=False)  # false_positive, false_negative, correct
+    comment = Column(Text, nullable=True)
+    status = Column(String(20), default="pending")  # pending, reviewed, applied
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    scan = relationship("ScanHistory")
+    user = relationship("User")
