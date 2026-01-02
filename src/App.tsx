@@ -4,12 +4,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar";
+import ChatbotWidget from "./components/ChatbotWidget";
 import Index from "./pages/Index";
 import UrlScanner from "./pages/UrlScanner";
 import TextScanner from "./pages/TextScanner";
 import CallAnalyzer from "./pages/CallAnalyzer";
 import ScreenshotOCR from "./pages/ScreenshotOCR";
 import LearnPhishing from "./pages/LearnPhishing";
+import CommunityThreats from "./pages/CommunityThreats";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,9 +30,11 @@ const App = () => (
             <Route path="/text-scanner" element={<TextScanner />} />
             <Route path="/call-analyzer" element={<CallAnalyzer />} />
             <Route path="/screenshot-ocr" element={<ScreenshotOCR />} />
+            <Route path="/community" element={<CommunityThreats />} />
             <Route path="/learn" element={<LearnPhishing />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <ChatbotWidget />
         </div>
       </BrowserRouter>
     </TooltipProvider>

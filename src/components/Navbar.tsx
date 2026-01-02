@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Shield, Link as LinkIcon, MessageSquare, Menu, X, BookOpen, Phone, Image } from "lucide-react";
+import { Shield, Link as LinkIcon, MessageSquare, Menu, X, BookOpen, Phone, Image, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ const navItems = [
   { path: "/text-scanner", label: "Text Scanner", icon: MessageSquare },
   { path: "/call-analyzer", label: "Call Analyzer", icon: Phone },
   { path: "/screenshot-ocr", label: "Screenshot OCR", icon: Image },
+  { path: "/community", label: "Community", icon: Globe },
   { path: "/learn", label: "Learn", icon: BookOpen },
 ];
 
