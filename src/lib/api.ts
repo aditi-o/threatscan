@@ -35,8 +35,16 @@ export const API_ENDPOINTS = {
   login: `${API_BASE_URL}/auth/login`,
   me: `${API_BASE_URL}/auth/me`,
   
-  // Other endpoints
+  // Chat endpoints
   chat: `${API_BASE_URL}/chat`,
+  chatTips: `${API_BASE_URL}/chat/tips`,
+  
+  // Community endpoints
+  communityReport: `${API_BASE_URL}/community/report`,
+  communityReports: `${API_BASE_URL}/community/reports`,
+  communityWarning: `${API_BASE_URL}/community/warning`,
+  
+  // Other endpoints
   report: `${API_BASE_URL}/report`,
   reports: `${API_BASE_URL}/reports`,
   feedback: `${API_BASE_URL}/feedback`,
