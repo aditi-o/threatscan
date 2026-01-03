@@ -2,10 +2,15 @@
 Database configuration for SafeLink Shield.
 Uses SQLAlchemy async with SQLite or PostgreSQL.
 """
-
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.config import settings
+from dotenv import load_dotenv
+import os
+
+load_dotenv()   # 👈 MUST be before using env vars
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Create async engine
 # Use async_database_url to handle URL conversion for PostgreSQL
