@@ -1,6 +1,11 @@
 """
 Scan router for SafeLink Shield.
 Handles URL, text, screenshot, and audio scanning.
+
+Security:
+- All inputs are validated before processing
+- File uploads are restricted by type and size
+- PII is redacted before storage
 """
 
 from typing import Optional, List
@@ -17,6 +22,12 @@ from app.utils.ocr import image_to_text
 from app.utils.stt import audio_to_text, is_supported_audio_format
 from app.utils.sanitizers import redact_pii
 from app.utils.threat_explainer import get_full_threat_analysis
+from app.utils.validators import (
+    validate_url, validate_text, validate_image_upload, 
+    validate_audio_upload, validate_language, sanitize_filename,
+    MAX_TEXT_LENGTH
+)
+from app.middleware.error_handler import bad_request, unprocessable
 
 router = APIRouter(prefix="/scan", tags=["Scanning"])
 
@@ -90,12 +101,14 @@ async def scan_url(
     
     Uses URLBert model + heuristic analysis for comprehensive detection.
     """
-    # Get URL from request (supports both 'content' and 'url' fields)
+    # Get and validate URL from request
     url = request.get_content().strip()
-    language = request.get_language()
+    language = validate_language(request.get_language())
     
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
+    # Validate URL
+    is_valid, error = validate_url(url)
+    if not is_valid:
+        raise bad_request(error)
     
     # Validate URL format
     if not url.startswith(("http://", "https://")):
@@ -201,14 +214,13 @@ async def scan_text(
     
     Uses zero-shot classification to identify scam types.
     """
-    # Get text from request (supports both 'content' and 'text' fields)
+    # Get and validate text from request
     text = request.get_content().strip()
     
-    if not text:
-        raise HTTPException(status_code=400, detail="Text content is required")
-    
-    if len(text) < 10:
-        raise HTTPException(status_code=400, detail="Text too short for analysis")
+    # Validate text input
+    is_valid, error = validate_text(text, min_length=10, max_length=MAX_TEXT_LENGTH)
+    if not is_valid:
+        raise bad_request(error)
     
     # Redact PII for storage
     redacted_text, _ = redact_pii(text)
@@ -292,23 +304,27 @@ async def scan_screenshot(
     
     Extracts text using OCR, then analyzes for scam patterns.
     """
-    # Validate file type
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
-    # Read file
+    # Read file first to get size
     file_bytes = await file.read()
     
-    if len(file_bytes) > 10 * 1024 * 1024:  # 10MB limit
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    # Validate file upload
+    is_valid, error = validate_image_upload(
+        filename=file.filename or "image.png",
+        content_type=file.content_type,
+        file_size=len(file_bytes)
+    )
+    if not is_valid:
+        raise bad_request(error)
     
     # Extract text using OCR
-    extracted_text = image_to_text(file_bytes)
+    try:
+        extracted_text = image_to_text(file_bytes)
+    except Exception as e:
+        raise unprocessable(f"Failed to process image: {str(e)}")
     
     if not extracted_text:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not extract text from image. Please try a clearer image or ensure Tesseract OCR is installed."
+        raise unprocessable(
+            "Could not extract text from image. Please try a clearer image or ensure Tesseract OCR is installed."
         )
     
     # Redact PII
@@ -388,27 +404,34 @@ async def scan_audio(
     
     Transcribes audio using Whisper, then analyzes for scam patterns.
     """
-    # Validate file format
-    filename = file.filename or "audio.wav"
+    # Read file first to get size
+    file_bytes = await file.read()
+    filename = sanitize_filename(file.filename or "audio.wav")
+    
+    # Validate file format using extension check
     if not is_supported_audio_format(filename):
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported audio format. Supported: WAV, MP3, M4A, AAC, OGG, FLAC"
+        raise bad_request(
+            "Unsupported audio format. Supported: WAV, MP3, M4A, AAC, OGG, FLAC"
         )
     
-    # Read file
-    file_bytes = await file.read()
-    
-    if len(file_bytes) > 25 * 1024 * 1024:  # 25MB limit
-        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
+    # Validate file upload
+    is_valid, error = validate_audio_upload(
+        filename=filename,
+        content_type=file.content_type,
+        file_size=len(file_bytes)
+    )
+    if not is_valid:
+        raise bad_request(error)
     
     # Transcribe audio
-    transcript = await audio_to_text(file_bytes, filename)
+    try:
+        transcript = await audio_to_text(file_bytes, filename)
+    except Exception as e:
+        raise unprocessable(f"Failed to transcribe audio: {str(e)}")
     
     if not transcript:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not transcribe audio. Please try a clearer recording or check HF API key."
+        raise unprocessable(
+            "Could not transcribe audio. Please try a clearer recording or check HF API key."
         )
     
     # Redact PII

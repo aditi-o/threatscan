@@ -5,14 +5,44 @@ Main application entry point.
 Run with: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import create_db
 from app.routers import auth, scan, chat, report, admin, feedback, community
+from app.middleware.error_handler import GlobalErrorHandler
+from app.middleware.rate_limiter import RateLimitMiddleware
+
+
+# ========================
+# CORS Configuration
+# ========================
+
+# Production: Set ALLOWED_ORIGINS env var to comma-separated list
+# e.g., "https://your-frontend.com,https://www.your-frontend.com"
+ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
+
+if ALLOWED_ORIGINS_ENV:
+    # Production: Use configured origins
+    ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_ENV.split(",") if origin.strip()]
+else:
+    # Development: Allow common local origins
+    ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+    ]
+
+# Check if running in development mode
+IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "development").lower() == "development"
 
 
 @asynccontextmanager
@@ -28,6 +58,12 @@ async def lifespan(app: FastAPI):
     warnings = settings.validate()
     for warning in warnings:
         print(f"⚠️  {warning}")
+    
+    # Log CORS configuration
+    if IS_DEVELOPMENT:
+        print("🔧 Running in DEVELOPMENT mode - CORS is relaxed")
+    else:
+        print(f"🔒 Running in PRODUCTION mode - CORS origins: {ALLOWED_ORIGINS[:3]}...")
     
     # Create database tables
     await create_db()
@@ -60,18 +96,25 @@ app = FastAPI(
     """,
     version=settings.API_VERSION,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if IS_DEVELOPMENT else None,  # Disable docs in production
+    redoc_url="/redoc" if IS_DEVELOPMENT else None
 )
 
-# Add CORS middleware - Allow all origins for development
-# In production, restrict to specific domains
+# Add global error handler FIRST (catches all errors)
+app.add_middleware(GlobalErrorHandler, debug=IS_DEVELOPMENT)
+
+# Add rate limiting middleware
+app.add_middleware(RateLimitMiddleware)
+
+# Add CORS middleware with secure configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific domains in production
+    allow_origins=ALLOWED_ORIGINS if not IS_DEVELOPMENT else ["*"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,  # Cache preflight for 10 minutes
 )
 
 # Add GZip compression for responses
@@ -97,7 +140,7 @@ async def root():
         "status": "ok",
         "name": "SafeLink Shield API",
         "version": settings.API_VERSION,
-        "docs": "/docs"
+        "docs": "/docs" if IS_DEVELOPMENT else None
     }
 
 

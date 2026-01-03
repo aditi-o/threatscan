@@ -5,8 +5,9 @@ import { Textarea } from "@/components/ui/textarea";
 import RiskMeter from "@/components/RiskMeter";
 import ResultCard from "@/components/ResultCard";
 import ScanningAnimation from "@/components/ScanningAnimation";
+import { ApiErrorDisplay } from "@/components/ui/states";
 import { toast } from "sonner";
-import { API_ENDPOINTS, apiRequest } from "@/lib/api";
+import { API_ENDPOINTS, apiRequest, ApiError, getErrorMessage } from "@/lib/api";
 
 interface ScanResult {
   riskScore: number;
@@ -142,6 +143,7 @@ const TextScanner = () => {
   const [text, setText] = useState("");
   const [isScanning, setIsScanning] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
   const handleScan = async () => {
     if (!text.trim()) {
@@ -156,6 +158,7 @@ const TextScanner = () => {
 
     setIsScanning(true);
     setResult(null);
+    setError(null);
 
     try {
       const data = await apiRequest<{
@@ -192,12 +195,19 @@ const TextScanner = () => {
       } else {
         toast.success("Message appears to be safe!");
       }
-    } catch (error) {
-      console.error("Scan error:", error);
-      // Fallback to local analysis if backend is unavailable
-      const localResult = analyzeText(text);
-      setResult(localResult);
-      toast.info("Using local analysis (backend unavailable)");
+    } catch (err) {
+      console.error("Scan error:", err);
+      
+      // Check if it's a rate limit or validation error
+      if (err instanceof ApiError && (err.isRateLimited || err.statusCode === 400)) {
+        setError(err);
+        toast.error(getErrorMessage(err));
+      } else {
+        // Fallback to local analysis if backend is unavailable
+        const localResult = analyzeText(text);
+        setResult(localResult);
+        toast.info("Using local analysis (backend unavailable)");
+      }
     } finally {
       setIsScanning(false);
     }
@@ -282,8 +292,21 @@ const TextScanner = () => {
           </div>
         )}
 
+        {/* Error State */}
+        {error && !isScanning && (
+          <div className="max-w-2xl mx-auto">
+            <ApiErrorDisplay 
+              error={error} 
+              onRetry={() => {
+                setError(null);
+                handleScan();
+              }}
+            />
+          </div>
+        )}
+
         {/* Results */}
-        {result && !isScanning && (
+        {result && !isScanning && !error && (
           <div className="max-w-2xl mx-auto space-y-6">
             {/* Risk Score */}
             <div className="glass-card p-8 rounded-xl text-center">
