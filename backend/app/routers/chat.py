@@ -304,6 +304,11 @@ async def get_hf_response(message: str, scan_context: Optional[ScanContext], lan
     try:
         from app.utils.hf_client import hf_client
         
+        # Check if HF API key is configured
+        if not settings.HF_API_KEY:
+            print("⚠️ HF_API_KEY not configured - skipping HuggingFace fallback")
+            return None
+        
         # Build context
         context_str = ""
         if scan_context and scan_context.url:
@@ -354,14 +359,16 @@ async def chat(request: ChatRequest):
     # Generate conversation ID if not provided
     conversation_id = request.conversation_id or str(uuid.uuid4())
     
-    # Try OpenAI first
-    response_text = await get_openai_response(message, request.scan_context, lang)
+    # Try OpenAI first (if API key is configured and has quota)
+    response_text = None
+    if settings.OPENAI_API_KEY:
+        response_text = await get_openai_response(message, request.scan_context, lang)
     
-    # Fallback to HuggingFace
-    if not response_text:
+    # Fallback to HuggingFace (if configured)
+    if not response_text and settings.HF_API_KEY:
         response_text = await get_hf_response(message, request.scan_context, lang)
     
-    # Final fallback to local knowledge base
+    # Final fallback to local knowledge base (always works)
     if not response_text:
         response_text = get_local_response(message, request.scan_context, lang)
     
