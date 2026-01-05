@@ -10,7 +10,11 @@ Features:
 """
 
 import uuid
-from typing import Optional, Dict, Any, List
+import asyncio
+import json
+from typing import Optional, Dict, Any, List, Tuple
+
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from app.config import settings
@@ -43,9 +47,15 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Schema for chatbot responses."""
+
     response: str
     conversation_id: str
     language: str = "en"
+
+    # Diagnostics (safe to expose)
+    provider: str = "local"  # openai | huggingface | local
+    request_id: str
+    warnings: List[str] = Field(default_factory=list)
 
 
 # ========================
@@ -264,70 +274,284 @@ Use this context to provide relevant, educational responses about why this URL m
     return context_templates.get(lang, context_templates["en"])
 
 
-async def get_openai_response(message: str, scan_context: Optional[ScanContext], lang: str) -> Optional[str]:
-    """Get response from OpenAI API with scan context."""
+def _log_chat_event(event: Dict[str, Any]) -> None:
+    """Structured logging for /chat without leaking secrets or prompts."""
+    safe_event = {
+        k: v
+        for k, v in event.items()
+        if k not in {"api_key", "authorization", "headers", "prompt", "messages"}
+    }
+    print("CHAT_EVENT " + json.dumps(safe_event, ensure_ascii=False))
+
+
+def _classify_openai_error(err: Exception) -> Dict[str, Any]:
+    msg = str(err)
+    status_code = getattr(err, "status_code", None)
+
+    # Heuristic classification (keeps us compatible across OpenAI SDK versions)
+    error_type = "unknown"
+    if "insufficient_quota" in msg:
+        error_type = "insufficient_quota"
+    elif "rate_limit" in msg or "Error code: 429" in msg or status_code == 429:
+        error_type = "rate_limited"
+    elif "401" in msg or status_code == 401:
+        error_type = "auth"
+    elif "timeout" in msg.lower():
+        error_type = "timeout"
+
+    return {
+        "error_type": error_type,
+        "status_code": status_code,
+        "message": msg,
+    }
+
+
+async def try_openai_response(
+    *,
+    message: str,
+    scan_context: Optional[ScanContext],
+    lang: str,
+    request_id: str,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Try OpenAI chat completions. Returns (text, error_info)."""
+    if not settings.OPENAI_API_KEY:
+        return None, {
+            "provider": "openai",
+            "error_type": "not_configured",
+        }
+
+    model = "gpt-3.5-turbo"
+
     try:
         import openai
-        
-        if not settings.OPENAI_API_KEY:
-            return None
-        
+
         client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        
-        # Build system prompt with language preference
+
         system_prompt = SYSTEM_PROMPTS.get(lang, SYSTEM_PROMPTS["en"])
-        
-        # Add context if available
         if scan_context:
             context_info = build_context_prompt(scan_context, lang)
-            system_prompt = f"{system_prompt}\n\n{context_info}"
-        
+            system_prompt = f"{system_prompt}\n\n{context_info}" if context_info else system_prompt
+
+        _log_chat_event(
+            {
+                "request_id": request_id,
+                "event": "provider_attempt",
+                "provider": "openai",
+                "model": model,
+            }
+        )
+
         response = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
+                {"role": "user", "content": message},
             ],
             max_tokens=500,
-            temperature=0.7
+            temperature=0.7,
         )
-        
-        return response.choices[0].message.content
-        
+
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            return None, {
+                "provider": "openai",
+                "model": model,
+                "error_type": "empty_response",
+            }
+
+        return text, None
+
     except Exception as e:
-        print(f"❌ OpenAI error: {str(e)}")
-        return None
+        info = _classify_openai_error(e)
+        _log_chat_event(
+            {
+                "request_id": request_id,
+                "event": "provider_error",
+                "provider": "openai",
+                "model": model,
+                "error_type": info.get("error_type"),
+                "status_code": info.get("status_code"),
+            }
+        )
+        return None, {
+            "provider": "openai",
+            "model": model,
+            **info,
+        }
 
 
-async def get_hf_response(message: str, scan_context: Optional[ScanContext], lang: str) -> Optional[str]:
-    """Get response from HuggingFace API (fallback)."""
-    try:
-        from app.utils.hf_client import hf_client
-        
-        # Check if HF API key is configured
-        if not settings.HF_API_KEY:
-            print("⚠️ HF_API_KEY not configured - skipping HuggingFace fallback")
-            return None
-        
-        # Build context
-        context_str = ""
-        if scan_context and scan_context.url:
-            context_str = f"\nContext: User scanned URL '{scan_context.url}' - Result: {scan_context.verdict}"
-        
-        # Format prompt for Flan-T5
-        prompt = f"""Answer as SafeBot, a friendly cyber safety assistant.
-{context_str}
+HF_CHAT_MODELS: List[str] = [
+    # User-requested options (may depend on availability on HF Inference Router)
+    "HuggingFaceH4/zephyr-7b-beta",
+    "google/gemma-2-2b-it",
+    "microsoft/Phi-3-mini-4k-instruct",
+    "Qwen/Qwen2.5-3B-Instruct",
+    "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+]
 
-User question: {message}
 
-Provide a helpful, calm, educational response about online safety:"""
-        
-        response = await hf_client.generate_chat_response(prompt)
-        return response
-        
-    except Exception as e:
-        print(f"❌ HuggingFace error: {str(e)}")
-        return None
+def _extract_hf_generated_text(payload: Any) -> Optional[str]:
+    """HF router may return [{...}] or [[{...}]]; normalize and extract generated_text."""
+    if isinstance(payload, list) and payload:
+        first = payload[0]
+        if isinstance(first, list) and first:
+            first = first[0]
+        if isinstance(first, dict):
+            return first.get("generated_text")
+    if isinstance(payload, dict):
+        return payload.get("generated_text")
+    return None
+
+
+def _build_hf_prompt(message: str, scan_context: Optional[ScanContext], lang: str) -> str:
+    """Build an instruction-style prompt for HF text-generation models."""
+    system = SYSTEM_PROMPTS.get(lang, SYSTEM_PROMPTS["en"])
+    context_info = build_context_prompt(scan_context, lang) if scan_context else ""
+
+    parts = [system]
+    if context_info:
+        parts.append(context_info)
+
+    # Simple instruct format (works across most instruct/chat HF LMs)
+    parts.append(f"User: {message}\nAssistant:")
+    return "\n\n".join(parts)
+
+
+async def try_hf_response(
+    *,
+    message: str,
+    scan_context: Optional[ScanContext],
+    lang: str,
+    request_id: str,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Try Hugging Face Inference Router with a list of chat-capable instruct models."""
+    if not settings.HF_API_KEY:
+        return None, {
+            "provider": "huggingface",
+            "error_type": "not_configured",
+        }
+
+    from app.utils.hf_client import HF_API_URL  # safe: no secrets
+
+    prompt = _build_hf_prompt(message, scan_context, lang)
+    headers = {"Authorization": f"Bearer {settings.HF_API_KEY}"}
+
+    last_error: Optional[Dict[str, Any]] = None
+
+    for model_id in HF_CHAT_MODELS:
+        url = f"{HF_API_URL}/{model_id}"
+
+        # Log URL without secrets
+        _log_chat_event(
+            {
+                "request_id": request_id,
+                "event": "provider_attempt",
+                "provider": "huggingface",
+                "model": model_id,
+                "url": url,
+            }
+        )
+
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": 300,
+                "temperature": 0.7,
+                "return_full_text": False,
+            },
+        }
+
+        # Small retry for transient states (model loading)
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=45) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text = (_extract_hf_generated_text(data) or "").strip()
+                    if text:
+                        return text, None
+
+                    last_error = {
+                        "provider": "huggingface",
+                        "model": model_id,
+                        "error_type": "empty_response",
+                        "status_code": 200,
+                    }
+                    break
+
+                if resp.status_code == 503 and attempt == 0:
+                    # Model is warming up
+                    await asyncio.sleep(2)
+                    continue
+
+                # Non-200
+                error_type = "hf_error"
+                if resp.status_code in (401, 403):
+                    error_type = "auth"
+                elif resp.status_code == 404:
+                    error_type = "not_found"
+                elif resp.status_code == 429:
+                    error_type = "rate_limited"
+                elif 500 <= resp.status_code <= 599:
+                    error_type = "server_error"
+
+                last_error = {
+                    "provider": "huggingface",
+                    "model": model_id,
+                    "error_type": error_type,
+                    "status_code": resp.status_code,
+                }
+
+                _log_chat_event(
+                    {
+                        "request_id": request_id,
+                        "event": "provider_error",
+                        "provider": "huggingface",
+                        "model": model_id,
+                        "error_type": error_type,
+                        "status_code": resp.status_code,
+                    }
+                )
+
+                break
+
+            except httpx.TimeoutException:
+                last_error = {
+                    "provider": "huggingface",
+                    "model": model_id,
+                    "error_type": "timeout",
+                }
+                _log_chat_event(
+                    {
+                        "request_id": request_id,
+                        "event": "provider_error",
+                        "provider": "huggingface",
+                        "model": model_id,
+                        "error_type": "timeout",
+                    }
+                )
+                break
+            except Exception as e:
+                last_error = {
+                    "provider": "huggingface",
+                    "model": model_id,
+                    "error_type": "exception",
+                    "message": str(e)[:300],
+                }
+                _log_chat_event(
+                    {
+                        "request_id": request_id,
+                        "event": "provider_error",
+                        "provider": "huggingface",
+                        "model": model_id,
+                        "error_type": "exception",
+                    }
+                )
+                break
+
+    return None, last_error
 
 
 # ========================
@@ -336,46 +560,86 @@ Provide a helpful, calm, educational response about online safety:"""
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """
-    Send a message to SafeBot assistant.
-    
-    Features:
-    - Context-aware responses based on recent scans
-    - Multilingual support (en, hi, mr)
-    - Educational, non-alarming tone
-    - Falls back to local knowledge if API unavailable
-    """
+    """Send a message to SafeBot assistant with reliable provider fallbacks."""
+
+    request_id = str(uuid.uuid4())
     message = request.message.strip()
-    
+
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
+
     if len(message) > 1000:
         raise HTTPException(status_code=400, detail="Message too long (max 1000 characters)")
-    
+
     # Validate language
     lang = request.language if request.language in ["en", "hi", "mr"] else "en"
-    
+
     # Generate conversation ID if not provided
     conversation_id = request.conversation_id or str(uuid.uuid4())
-    
-    # Try OpenAI first (if API key is configured and has quota)
-    response_text = None
+
+    warnings: List[str] = []
+    provider = "local"
+
+    # 1) OpenAI
+    response_text: Optional[str] = None
+    openai_error: Optional[Dict[str, Any]] = None
     if settings.OPENAI_API_KEY:
-        response_text = await get_openai_response(message, request.scan_context, lang)
-    
-    # Fallback to HuggingFace (if configured)
+        response_text, openai_error = await try_openai_response(
+            message=message,
+            scan_context=request.scan_context,
+            lang=lang,
+            request_id=request_id,
+        )
+        if response_text:
+            provider = "openai"
+        elif openai_error:
+            warnings.append(
+                f"OpenAI unavailable ({openai_error.get('error_type')}{' ' + str(openai_error.get('status_code')) if openai_error.get('status_code') else ''})."
+            )
+
+    # 2) Hugging Face
+    hf_error: Optional[Dict[str, Any]] = None
     if not response_text and settings.HF_API_KEY:
-        response_text = await get_hf_response(message, request.scan_context, lang)
-    
-    # Final fallback to local knowledge base (always works)
+        response_text, hf_error = await try_hf_response(
+            message=message,
+            scan_context=request.scan_context,
+            lang=lang,
+            request_id=request_id,
+        )
+        if response_text:
+            provider = "huggingface"
+        elif hf_error:
+            warnings.append(
+                f"Hugging Face unavailable ({hf_error.get('error_type')}{' ' + str(hf_error.get('status_code')) if hf_error.get('status_code') else ''})."
+            )
+
+    # 3) Local fallback (always)
     if not response_text:
         response_text = get_local_response(message, request.scan_context, lang)
-    
+
+        # If we got here due to missing keys, be explicit.
+        if not settings.OPENAI_API_KEY:
+            warnings.append("OpenAI not configured.")
+        if not settings.HF_API_KEY:
+            warnings.append("Hugging Face not configured.")
+
+    _log_chat_event(
+        {
+            "request_id": request_id,
+            "event": "chat_completed",
+            "provider": provider,
+            "conversation_id": conversation_id,
+            "language": lang,
+        }
+    )
+
     return ChatResponse(
         response=response_text,
         conversation_id=conversation_id,
-        language=lang
+        language=lang,
+        provider=provider,
+        request_id=request_id,
+        warnings=warnings,
     )
 
 
