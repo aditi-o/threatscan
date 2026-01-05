@@ -380,13 +380,11 @@ async def try_openai_response(
         }
 
 
+# Models confirmed to work on free HF Inference API (text-generation endpoint)
 HF_CHAT_MODELS: List[str] = [
-    # User-requested options (may depend on availability on HF Inference Router)
-    "HuggingFaceH4/zephyr-7b-beta",
-    "google/gemma-2-2b-it",
-    "microsoft/Phi-3-mini-4k-instruct",
-    "Qwen/Qwen2.5-3B-Instruct",
-    "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+    "mistralai/Mistral-7B-Instruct-v0.2",  # Reliable, fast
+    "google/flan-t5-large",                 # Good for Q&A style
+    "tiiuae/falcon-7b-instruct",            # Alternative instruct model
 ]
 
 
@@ -579,27 +577,11 @@ async def chat(request: ChatRequest):
 
     warnings: List[str] = []
     provider = "local"
-
-    # 1) OpenAI
     response_text: Optional[str] = None
-    openai_error: Optional[Dict[str, Any]] = None
-    if settings.OPENAI_API_KEY:
-        response_text, openai_error = await try_openai_response(
-            message=message,
-            scan_context=request.scan_context,
-            lang=lang,
-            request_id=request_id,
-        )
-        if response_text:
-            provider = "openai"
-        elif openai_error:
-            warnings.append(
-                f"OpenAI unavailable ({openai_error.get('error_type')}{' ' + str(openai_error.get('status_code')) if openai_error.get('status_code') else ''})."
-            )
 
-    # 2) Hugging Face
+    # 1) Hugging Face only (no OpenAI)
     hf_error: Optional[Dict[str, Any]] = None
-    if not response_text and settings.HF_API_KEY:
+    if settings.HF_API_KEY:
         response_text, hf_error = await try_hf_response(
             message=message,
             scan_context=request.scan_context,
@@ -613,13 +595,10 @@ async def chat(request: ChatRequest):
                 f"Hugging Face unavailable ({hf_error.get('error_type')}{' ' + str(hf_error.get('status_code')) if hf_error.get('status_code') else ''})."
             )
 
-    # 3) Local fallback (always)
+    # 2) Local fallback (always available)
     if not response_text:
         response_text = get_local_response(message, request.scan_context, lang)
 
-        # If we got here due to missing keys, be explicit.
-        if not settings.OPENAI_API_KEY:
-            warnings.append("OpenAI not configured.")
         if not settings.HF_API_KEY:
             warnings.append("Hugging Face not configured.")
 
