@@ -380,11 +380,11 @@ async def try_openai_response(
         }
 
 
-# Models confirmed to work on free HF Inference API (text-generation endpoint)
+# Models deployed on free HF Inference API (check: https://huggingface.co/models?inference_provider=all)
 HF_CHAT_MODELS: List[str] = [
-    "mistralai/Mistral-7B-Instruct-v0.2",  # Reliable, fast
-    "google/flan-t5-large",                 # Good for Q&A style
-    "tiiuae/falcon-7b-instruct",            # Alternative instruct model
+    "google/flan-t5-base",                  # Reliable text2text - always available
+    "google/flan-t5-small",                 # Smaller fallback
+    "gpt2",                                 # Legacy but always deployed
 ]
 
 
