@@ -8,8 +8,8 @@ from functools import lru_cache
 from typing import Any, Dict, Optional, List
 from app.config import settings
 
-# Hugging Face Inference API base URL (legacy endpoint - most reliable for free tier)
-HF_API_URL = "https://api-inference.huggingface.co/models"
+# Hugging Face Inference API base URL (new router endpoint)
+HF_API_URL = "https://router.huggingface.co/hf-inference/models"
 
 class HFClient:
     """

@@ -380,11 +380,12 @@ async def try_openai_response(
         }
 
 
-# Models deployed on free HF Inference API (check: https://huggingface.co/models?inference_provider=all)
+# Models deployed on HF Inference Router (check: https://huggingface.co/models?inference_provider=all)
+# Using models with confirmed router.huggingface.co support
 HF_CHAT_MODELS: List[str] = [
-    "google/flan-t5-base",                  # Reliable text2text - always available
-    "google/flan-t5-small",                 # Smaller fallback
-    "gpt2",                                 # Legacy but always deployed
+    "mistralai/Mistral-7B-Instruct-v0.3",   # Strong instruct model on router
+    "meta-llama/Llama-3.2-3B-Instruct",     # Llama 3.2 instruct
+    "Qwen/Qwen2.5-1.5B-Instruct",           # Small but capable
 ]
 
 
