@@ -41,10 +41,11 @@ class HFClient:
             Model prediction result or None if failed
         """
         if not self.api_key:
-            print("⚠️ HF_API_KEY not set - using fallback")
+            print("❌ HF_API_KEY not set - external HF API calls will fail")
             return None
         
         url = f"{HF_API_URL}/{model_id}"
+        print(f"🌐 HF_EXTERNAL_CALL: {url}")
         
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -62,8 +63,14 @@ class HFClient:
                     # Model is loading, wait and retry
                     print(f"⏳ Model {model_id} is loading...")
                     return {"loading": True}
+                elif response.status_code == 401:
+                    print(f"❌ HF API auth error: Invalid HF_API_KEY")
+                    return None
+                elif response.status_code == 404:
+                    print(f"❌ HF API error: Model {model_id} not found at {url}")
+                    return None
                 else:
-                    print(f"❌ HF API error: {response.status_code} - {response.text}")
+                    print(f"❌ HF API error: {response.status_code} - {response.text[:200]}")
                     return None
                     
         except httpx.TimeoutException:

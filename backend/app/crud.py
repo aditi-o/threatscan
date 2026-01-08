@@ -7,7 +7,7 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from passlib.context import CryptContext
-from app.models import User, ScanHistory, Report, ScanFeedback
+from app.models import User, ScanHistory, Report, ScanFeedback, CommunityReport
 from app.schemas import UserCreate, ReportCreate, FeedbackCreate
 
 # Password hashing context
@@ -240,4 +240,65 @@ async def get_all_feedback(
     if feedback_type:
         query = query.where(ScanFeedback.feedback_type == feedback_type)
     result = await db.execute(query)
+    return result.scalars().all()
+
+
+# ========================
+# Community Report CRUD
+# ========================
+
+async def get_next_community_report_id(db: AsyncSession) -> str:
+    """
+    Generate the next community report ID (CR-000001 format).
+    """
+    from sqlalchemy import func
+    result = await db.execute(select(func.count(CommunityReport.id)))
+    count = result.scalar() or 0
+    return f"CR-{count + 1:06d}"
+
+
+async def create_community_report(
+    db: AsyncSession,
+    report_id: str,
+    masked_url: str,
+    threat_category: str,
+    threat_category_display: str,
+    attack_patterns: list,
+    explanation: str,
+    safety_tip: str,
+    language: str = "en"
+) -> CommunityReport:
+    """
+    Create a new community threat report (persisted to database).
+    """
+    db_report = CommunityReport(
+        report_id=report_id,
+        masked_url=masked_url,
+        threat_category=threat_category,
+        threat_category_display=threat_category_display,
+        attack_patterns=attack_patterns,
+        explanation=explanation,
+        safety_tip=safety_tip,
+        language=language
+    )
+    db.add(db_report)
+    await db.commit()
+    await db.refresh(db_report)
+    return db_report
+
+
+async def get_community_reports(
+    db: AsyncSession,
+    language: str = "en",
+    limit: int = 20
+) -> List[CommunityReport]:
+    """
+    Get recent community reports from the database.
+    Returns all reports regardless of language (frontend can filter/translate).
+    """
+    result = await db.execute(
+        select(CommunityReport)
+        .order_by(CommunityReport.created_at.desc())
+        .limit(limit)
+    )
     return result.scalars().all()

@@ -558,7 +558,12 @@ async def try_hf_response(
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Send a message to SafeBot assistant with reliable provider fallbacks."""
+    """
+    Send a message to SafeBot assistant.
+    
+    REQUIRES HF_API_KEY for AI responses.
+    Falls back to local knowledge base ONLY if explicitly no HF key.
+    """
 
     request_id = str(uuid.uuid4())
     message = request.message.strip()
@@ -579,28 +584,40 @@ async def chat(request: ChatRequest):
     provider = "local"
     response_text: Optional[str] = None
 
-    # 1) Hugging Face only (no OpenAI)
-    hf_error: Optional[Dict[str, Any]] = None
-    if settings.HF_API_KEY:
+    # Check if HF_API_KEY is configured
+    if not settings.HF_API_KEY:
+        # NO API KEY - This should fail visibly in production
+        print(f"❌ CHAT_ERROR: HF_API_KEY not configured - request_id={request_id}")
+        warnings.append("HF_API_KEY not configured. AI features disabled.")
+        # Use local fallback only when no key is configured
+        response_text = get_local_response(message, request.scan_context, lang)
+        provider = "local_no_api_key"
+    else:
+        # HF_API_KEY is set - MUST use external HF API
+        print(f"🤖 CHAT: Attempting Hugging Face API - request_id={request_id}")
+        
         response_text, hf_error = await try_hf_response(
             message=message,
             scan_context=request.scan_context,
             lang=lang,
             request_id=request_id,
         )
+        
         if response_text:
             provider = "huggingface"
-        elif hf_error:
+            print(f"✅ CHAT_SUCCESS: HF response received - request_id={request_id}")
+        else:
+            # HF failed even with API key - log clearly
+            error_type = hf_error.get('error_type', 'unknown') if hf_error else 'unknown'
+            status_code = hf_error.get('status_code', '') if hf_error else ''
+            print(f"❌ CHAT_ERROR: All HF models failed - error={error_type} status={status_code} request_id={request_id}")
+            
             warnings.append(
-                f"Hugging Face unavailable ({hf_error.get('error_type')}{' ' + str(hf_error.get('status_code')) if hf_error.get('status_code') else ''})."
+                f"Hugging Face API failed ({error_type}{' ' + str(status_code) if status_code else ''}). Using local knowledge base."
             )
-
-    # 2) Local fallback (always available)
-    if not response_text:
-        response_text = get_local_response(message, request.scan_context, lang)
-
-        if not settings.HF_API_KEY:
-            warnings.append("Hugging Face not configured.")
+            # Fallback to local only after HF failure
+            response_text = get_local_response(message, request.scan_context, lang)
+            provider = "local_hf_failed"
 
     _log_chat_event(
         {
@@ -609,6 +626,7 @@ async def chat(request: ChatRequest):
             "provider": provider,
             "conversation_id": conversation_id,
             "language": lang,
+            "hf_api_key_set": bool(settings.HF_API_KEY),
         }
     )
 
