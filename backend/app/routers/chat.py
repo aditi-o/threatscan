@@ -10,12 +10,12 @@ Features:
 """
 
 import uuid
-import asyncio
 import json
 from typing import Optional, Dict, Any, List, Tuple
 
-import httpx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+from app.config import settings
 from pydantic import BaseModel, Field
 from app.config import settings
 
@@ -380,177 +380,106 @@ async def try_openai_response(
         }
 
 
-# Models deployed on HF Inference Router (check: https://huggingface.co/models?inference_provider=all)
-# Using models with confirmed router.huggingface.co support
-HF_CHAT_MODELS: List[str] = [
-    "mistralai/Mistral-7B-Instruct-v0.3",   # Strong instruct model on router
-    "meta-llama/Llama-3.2-3B-Instruct",     # Llama 3.2 instruct
-    "Qwen/Qwen2.5-1.5B-Instruct",           # Small but capable
-]
-
-
-def _extract_hf_generated_text(payload: Any) -> Optional[str]:
-    """HF router may return [{...}] or [[{...}]]; normalize and extract generated_text."""
-    if isinstance(payload, list) and payload:
-        first = payload[0]
-        if isinstance(first, list) and first:
-            first = first[0]
-        if isinstance(first, dict):
-            return first.get("generated_text")
-    if isinstance(payload, dict):
-        return payload.get("generated_text")
-    return None
+# Single stable model for HF Inference API (standard endpoint)
+HF_CHAT_MODEL = "google/flan-t5-base"
 
 
 def _build_hf_prompt(message: str, scan_context: Optional[ScanContext], lang: str) -> str:
-    """Build an instruction-style prompt for HF text-generation models."""
-    system = SYSTEM_PROMPTS.get(lang, SYSTEM_PROMPTS["en"])
+    """Build a prompt for HF flan-t5 model."""
     context_info = build_context_prompt(scan_context, lang) if scan_context else ""
 
-    parts = [system]
-    if context_info:
-        parts.append(context_info)
+    # Build a concise prompt for flan-t5
+    parts = [
+        "You are SafeBot, a cyber safety assistant.",
+        f"Context: {context_info}" if context_info else "",
+        f"Question: {message}",
+        "Answer helpfully and concisely:"
+    ]
+    return " ".join(p for p in parts if p)
 
-    # Simple instruct format (works across most instruct/chat HF LMs)
-    parts.append(f"User: {message}\nAssistant:")
-    return "\n\n".join(parts)
 
-
-async def try_hf_response(
     *,
     message: str,
     scan_context: Optional[ScanContext],
     lang: str,
     request_id: str,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    """Try Hugging Face Inference Router with a list of chat-capable instruct models."""
+    """
+    Try Hugging Face Inference API with google/flan-t5-base.
+    Uses ONLY the standard api-inference.huggingface.co endpoint.
+    """
     if not settings.HF_API_KEY:
         return None, {
             "provider": "huggingface",
             "error_type": "not_configured",
         }
 
-    from app.utils.hf_client import HF_API_URL  # safe: no secrets
+    # Use hf_client for the actual API call
+    from app.utils.hf_client import hf_client
 
+    # Build prompt with context
     prompt = _build_hf_prompt(message, scan_context, lang)
-    headers = {"Authorization": f"Bearer {settings.HF_API_KEY}"}
 
-    last_error: Optional[Dict[str, Any]] = None
+    # Log attempt
+    _log_chat_event(
+        {
+            "request_id": request_id,
+            "event": "provider_attempt",
+            "provider": "huggingface",
+            "model": HF_CHAT_MODEL,
+            "url": f"https://api-inference.huggingface.co/models/{HF_CHAT_MODEL}",
+        }
+    )
 
-    for model_id in HF_CHAT_MODELS:
-        url = f"{HF_API_URL}/{model_id}"
+    try:
+        # Use hf_client.generate_chat_response which calls the standard HF API
+        response_text = await hf_client.generate_chat_response(prompt)
 
-        # Log URL without secrets
+        if response_text:
+            _log_chat_event(
+                {
+                    "request_id": request_id,
+                    "event": "provider_success",
+                    "provider": "huggingface",
+                    "model": HF_CHAT_MODEL,
+                }
+            )
+            return response_text, None
+
+        # Empty response
         _log_chat_event(
             {
                 "request_id": request_id,
-                "event": "provider_attempt",
+                "event": "provider_error",
                 "provider": "huggingface",
-                "model": model_id,
-                "url": url,
+                "model": HF_CHAT_MODEL,
+                "error_type": "empty_response",
             }
         )
-
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 300,
-                "temperature": 0.7,
-                "return_full_text": False,
-            },
+        return None, {
+            "provider": "huggingface",
+            "model": HF_CHAT_MODEL,
+            "error_type": "empty_response",
         }
 
-        # Small retry for transient states (model loading)
-        for attempt in range(2):
-            try:
-                async with httpx.AsyncClient(timeout=45) as client:
-                    resp = await client.post(url, headers=headers, json=payload)
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text = (_extract_hf_generated_text(data) or "").strip()
-                    if text:
-                        return text, None
-
-                    last_error = {
-                        "provider": "huggingface",
-                        "model": model_id,
-                        "error_type": "empty_response",
-                        "status_code": 200,
-                    }
-                    break
-
-                if resp.status_code == 503 and attempt == 0:
-                    # Model is warming up
-                    await asyncio.sleep(2)
-                    continue
-
-                # Non-200
-                error_type = "hf_error"
-                if resp.status_code in (401, 403):
-                    error_type = "auth"
-                elif resp.status_code == 404:
-                    error_type = "not_found"
-                elif resp.status_code == 429:
-                    error_type = "rate_limited"
-                elif 500 <= resp.status_code <= 599:
-                    error_type = "server_error"
-
-                last_error = {
-                    "provider": "huggingface",
-                    "model": model_id,
-                    "error_type": error_type,
-                    "status_code": resp.status_code,
-                }
-
-                _log_chat_event(
-                    {
-                        "request_id": request_id,
-                        "event": "provider_error",
-                        "provider": "huggingface",
-                        "model": model_id,
-                        "error_type": error_type,
-                        "status_code": resp.status_code,
-                    }
-                )
-
-                break
-
-            except httpx.TimeoutException:
-                last_error = {
-                    "provider": "huggingface",
-                    "model": model_id,
-                    "error_type": "timeout",
-                }
-                _log_chat_event(
-                    {
-                        "request_id": request_id,
-                        "event": "provider_error",
-                        "provider": "huggingface",
-                        "model": model_id,
-                        "error_type": "timeout",
-                    }
-                )
-                break
-            except Exception as e:
-                last_error = {
-                    "provider": "huggingface",
-                    "model": model_id,
-                    "error_type": "exception",
-                    "message": str(e)[:300],
-                }
-                _log_chat_event(
-                    {
-                        "request_id": request_id,
-                        "event": "provider_error",
-                        "provider": "huggingface",
-                        "model": model_id,
-                        "error_type": "exception",
-                    }
-                )
-                break
-
-    return None, last_error
+    except Exception as e:
+        error_msg = str(e)[:200]
+        _log_chat_event(
+            {
+                "request_id": request_id,
+                "event": "provider_error",
+                "provider": "huggingface",
+                "model": HF_CHAT_MODEL,
+                "error_type": "exception",
+                "message": error_msg,
+            }
+        )
+        return None, {
+            "provider": "huggingface",
+            "model": HF_CHAT_MODEL,
+            "error_type": "exception",
+            "message": error_msg,
+        }
 
 
 # ========================
