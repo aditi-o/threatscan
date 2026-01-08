@@ -10,6 +10,7 @@ Features:
 - Attack pattern analysis without visiting URLs
 - Rate limiting to prevent abuse
 - Multilingual educational explanations
+- PERSISTENT database storage (survives restarts)
 """
 
 import re
@@ -18,10 +19,13 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.threat_explainer import analyze_url_threats, TRANSLATIONS
+from app.db import get_db
+from app import crud
 
 
 router = APIRouter(prefix="/community", tags=["Community"])
@@ -123,31 +127,6 @@ class CommunityReportOut(BaseModel):
 
 
 # ========================
-# In-Memory Storage
-# ========================
-# In production, this would be a database table
-
-_community_reports: List[Dict] = []
-_report_counter = 0
-
-
-def _store_report(report_data: Dict) -> str:
-    """Store a community report and return its ID."""
-    global _report_counter
-    _report_counter += 1
-    report_id = f"CR-{_report_counter:06d}"
-    report_data["id"] = report_id
-    report_data["submitted_at"] = datetime.utcnow().isoformat()
-    _community_reports.append(report_data)
-    
-    # Keep only last 100 reports in memory
-    if len(_community_reports) > 100:
-        _community_reports.pop(0)
-    
-    return report_id
-
-
-# ========================
 # Multilingual Support
 # ========================
 
@@ -195,7 +174,8 @@ EDUCATIONAL_MESSAGES = {
 @router.post("/report", response_model=CommunityReportOut)
 async def submit_community_report(
     report: CommunityReportCreate,
-    request: Request
+    request: Request,
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Submit a suspicious URL for community awareness.
@@ -204,6 +184,7 @@ async def submit_community_report(
     - URL is masked before storage to prevent accidental clicks
     - No personal data is stored (anonymous submission)
     - Rate limited to prevent abuse
+    - PERSISTED TO DATABASE (survives server restarts)
     """
     # Check rate limit
     client_hash = _get_client_hash(request)
@@ -251,19 +232,23 @@ async def submit_community_report(
         "When in doubt, go directly to the official website by typing the address yourself."
     )
     
-    # Store the report (anonymously)
-    report_data = {
-        "masked_url": masked_url,
-        "threat_category": category,
-        "threat_category_display": category_display,
-        "attack_patterns": attack_patterns,
-        "explanation": explanation,
-        "safety_tip": safety_tip,
-        "language": lang,
-        # Note: We don't store user_description to avoid potential PII
-    }
+    # Generate unique report ID
+    report_id = await crud.get_next_community_report_id(db)
     
-    report_id = _store_report(report_data)
+    # Store the report in DATABASE (persisted)
+    db_report = await crud.create_community_report(
+        db=db,
+        report_id=report_id,
+        masked_url=masked_url,
+        threat_category=category,
+        threat_category_display=category_display,
+        attack_patterns=attack_patterns,
+        explanation=explanation,
+        safety_tip=safety_tip,
+        language=lang
+    )
+    
+    print(f"✅ Community report {report_id} saved to database")
     
     return CommunityReportOut(
         id=report_id,
@@ -272,7 +257,7 @@ async def submit_community_report(
         attack_patterns=attack_patterns,
         explanation=explanation,
         safety_tip=safety_tip,
-        submitted_at=report_data["submitted_at"],
+        submitted_at=db_report.created_at.isoformat(),
         language=lang
     )
 
@@ -280,10 +265,11 @@ async def submit_community_report(
 @router.get("/reports", response_model=List[CommunityReportOut])
 async def get_community_reports(
     language: str = "en",
-    limit: int = 20
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Get recent community-submitted threat reports.
+    Get recent community-submitted threat reports from DATABASE.
     
     Returns educational information about reported URLs:
     - Masked URLs (safe, non-clickable format)
@@ -298,30 +284,31 @@ async def get_community_reports(
     # Limit results
     limit = min(max(1, limit), 50)  # Between 1 and 50
     
-    # Get recent reports
-    recent_reports = _community_reports[-limit:][::-1]  # Newest first
+    # Get reports from DATABASE (persisted storage)
+    db_reports = await crud.get_community_reports(db, language=lang, limit=limit)
+    
+    print(f"📋 Retrieved {len(db_reports)} community reports from database")
     
     # Format response
     result = []
-    for report in recent_reports:
+    for report in db_reports:
         # Translate category if language differs
-        if report.get("language") != lang:
-            category = report.get("threat_category", "unknown")
+        if report.language != lang:
             category_display = CATEGORY_TRANSLATIONS.get(lang, CATEGORY_TRANSLATIONS["en"]).get(
-                category, category
+                report.threat_category, report.threat_category
             )
         else:
-            category_display = report.get("threat_category_display", report.get("threat_category"))
+            category_display = report.threat_category_display or report.threat_category
         
         result.append(CommunityReportOut(
-            id=report["id"],
-            masked_url=report["masked_url"],
+            id=report.report_id,
+            masked_url=report.masked_url,
             threat_category=category_display,
-            attack_patterns=report.get("attack_patterns", []),
-            explanation=report.get("explanation", ""),
-            safety_tip=report.get("safety_tip", ""),
-            submitted_at=report.get("submitted_at", ""),
-            language=report.get("language", "en")
+            attack_patterns=report.attack_patterns or [],
+            explanation=report.explanation or "",
+            safety_tip=report.safety_tip or "",
+            submitted_at=report.created_at.isoformat() if report.created_at else "",
+            language=report.language or "en"
         ))
     
     return result

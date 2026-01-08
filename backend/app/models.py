@@ -87,3 +87,22 @@ class ScanFeedback(Base):
     # Relationships
     scan = relationship("ScanHistory")
     user = relationship("User")
+
+
+class CommunityReport(Base):
+    """
+    Community-submitted threat reports for awareness.
+    Persists anonymous URL reports across server restarts.
+    """
+    __tablename__ = "community_reports"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(String(20), unique=True, index=True, nullable=False)  # CR-000001 format
+    masked_url = Column(String(2000), nullable=False)
+    threat_category = Column(String(50), nullable=False)
+    threat_category_display = Column(String(100), nullable=True)
+    attack_patterns = Column(JSON, default=list)
+    explanation = Column(Text, nullable=True)
+    safety_tip = Column(Text, nullable=True)
+    language = Column(String(10), default="en")
+    created_at = Column(DateTime, default=datetime.utcnow)
