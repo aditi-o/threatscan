@@ -8,8 +8,8 @@ from functools import lru_cache
 from typing import Any, Dict, Optional, List
 from app.config import settings
 
-# Hugging Face Inference API base URL (standard endpoint - NOT router)
-HF_API_URL = "https://api-inference.huggingface.co/models"
+# Hugging Face Inference API base URL (new router endpoint - required as of 2025)
+HF_API_URL = "https://router.huggingface.co/hf-inference/models"
 
 class HFClient:
     """
@@ -131,6 +131,7 @@ class HFClient:
             return None
         
         url = f"{HF_API_URL}/{model_id}"
+        print(f"🌐 HF_EXTERNAL_CALL (audio): {url}")
         
         try:
             async with httpx.AsyncClient(timeout=60) as client:
