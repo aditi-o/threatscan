@@ -91,14 +91,17 @@ class RateLimiter:
         # Hash for privacy (we don't need to store actual IPs)
         return str(hash(ip) % 10000000)
     
-    def _get_endpoint_type(self, path: str) -> str:
+    def _get_endpoint_type(self, path: str, method: str = "GET") -> str:
         """Determine endpoint type from path for rate limit config."""
         if "/scan/" in path:
             return "scan"
         elif "/chat" in path:
             return "chat"
         elif "/community" in path:
-            return "community"
+            # Only rate-limit POST (submissions), not GET (viewing reports)
+            if method == "POST":
+                return "community"
+            return "default"  # GET requests use default (relaxed) limits
         elif "/auth" in path:
             return "auth"
         return "default"
@@ -132,7 +135,7 @@ class RateLimiter:
         self._cleanup_old_entries()
         
         client_id = self._get_client_id(request)
-        endpoint_type = self._get_endpoint_type(request.url.path)
+        endpoint_type = self._get_endpoint_type(request.url.path, request.method)
         config = RATE_LIMITS.get(endpoint_type, RATE_LIMITS["default"])
         
         current_time = time.time()
