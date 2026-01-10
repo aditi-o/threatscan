@@ -398,6 +398,7 @@ def _build_hf_prompt(message: str, scan_context: Optional[ScanContext], lang: st
     return " ".join(p for p in parts if p)
 
 
+async def try_hf_response(
     *,
     message: str,
     scan_context: Optional[ScanContext],
